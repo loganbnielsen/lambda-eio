@@ -55,7 +55,9 @@ AWS. This runs in CI on every push.
 container-image AWS Lambda function — a `Dockerfile`, a local verification
 script (also credential-free, runs in CI), and the exact `aws ecr`/`aws lambda`
 commands for a real deployment. See its README for why container images
-(not zip-based custom runtimes) are the right packaging here.
+(not zip-based custom runtimes) are the right packaging here. `terraform/`
+provisions the ECR repo and the (assume-role-only, no long-lived keys) IAM
+roles that deployment needs — see its header comment for usage.
 
 ## Overview
 
