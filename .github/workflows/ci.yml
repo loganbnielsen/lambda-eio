@@ -20,5 +20,7 @@ jobs:
         run: opam exec -- dune build @all
       - name: Test
         run: opam exec -- dune runtest
+      - name: RIE protocol-conformance smoke test
+        run: opam exec -- test/rie_smoke_test.sh
       - name: Build docs
         run: opam exec -- dune build @doc

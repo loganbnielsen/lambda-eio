@@ -11,11 +11,12 @@ Originally developed inside the [Sun](https://github.com/loganbnielsen/sun)
 platform as the runtime layer behind `sun-fn`'s `Lambda` trigger, and extracted
 here to be usable by any Eio-based OCaml Lambda function, not just Sun's.
 
-**Caution:** protocol correctness is tested end to end against a real local mock
-Runtime API server (plain HTTP, so no TLS/SNI blocker to work around), but this
-package has not yet been run inside a real Lambda execution environment or the
-Runtime Interface Emulator. Treat 0.1.0 accordingly until someone reports a real
-end-to-end invocation working.
+**Caution:** protocol correctness is tested end to end against both a local mock
+Runtime API server (plain HTTP, so no TLS/SNI blocker to work around) and, since
+0.1.0, against AWS's own [Runtime Interface Emulator](https://github.com/aws/aws-lambda-runtime-interface-emulator)
+— see `test/rie_smoke_test.sh`. It has not yet been run inside a real Lambda
+execution environment on AWS itself. Treat 0.1.0 accordingly until someone
+reports a real deployed invocation working.
 
 ## Build
 
@@ -31,7 +32,22 @@ dune runtest
 ```
 
 No external infrastructure required — the wire-protocol tests spin up a local
-mock Runtime API server (no network).
+mock Runtime API server (no network). A separate, credential-free protocol
+conformance check against the real AWS Runtime Interface Emulator (RIE) is
+run with:
+
+```bash
+dune build
+test/rie_smoke_test.sh
+```
+
+This downloads (and caches under `~/.cache/aws-lambda-rie`) the `aws-lambda-rie`
+binary, runs it with `test/rie_echo_handler.exe` as the bootstrap — a tiny
+executable that loops via `Lambda_runtime.run_loop`, echoing each invocation's
+payload back — and posts two invocations at RIE's local invoke endpoint,
+checking the responses. No AWS account or credentials are involved: RIE is a
+self-contained local emulator of the real Runtime API, not a connection to
+AWS. This runs in CI on every push.
 
 ## Overview
 
