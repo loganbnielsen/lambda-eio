@@ -1,9 +1,3 @@
 _build/
 *.install
 .merlin
-
-# Terraform (terraform/)
-.terraform/
-*.tfstate
-*.tfstate.*
-*.tfvars
