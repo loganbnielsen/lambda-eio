@@ -40,32 +40,19 @@ every push (GitHub's `ubuntu-latest` runners have Docker preinstalled).
 ## Real deployment (needs an AWS account)
 
 ```bash
-# 1. Build and push to ECR
-aws ecr create-repository --repository-name lambda-eio-echo
-docker build -t lambda-eio-echo -f examples/echo-lambda/Dockerfile .
-aws ecr get-login-password | docker login --username AWS --password-stdin \
-  "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
-docker tag lambda-eio-echo:latest \
-  "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/lambda-eio-echo:latest"
-docker push "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/lambda-eio-echo:latest"
-
-# 2. Create the execution role (trust policy below), then the function
-aws lambda create-function \
-  --function-name lambda-eio-echo \
-  --package-type Image \
-  --code ImageUri="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/lambda-eio-echo:latest" \
-  --role "arn:aws:iam::$AWS_ACCOUNT_ID:role/lambda-eio-echo-execution" \
-  --timeout 10
-
-# 3. Invoke it for real
-aws lambda invoke --function-name lambda-eio-echo \
-  --cli-binary-format raw-in-base64-out \
-  --payload '{"hello":"world"}' \
-  /tmp/out.json
-cat /tmp/out.json   # expect {"echoed":{"hello":"world"}}
+PROFILE=my-admin-profile ./test-e2e.sh
 ```
 
-Execution role trust policy (lets the Lambda service assume the role):
+Builds the image, pushes it to a fresh ECR repo, creates a scoped execution
+role, deploys the function, invokes it twice for real (same echo checks as
+`local_test.sh`, against a real cold start + a warm reuse), and tears
+everything down afterward — teardown runs even if a check fails. `setup.sh`
+and `teardown.sh` also exist standalone if you want to leave the deployment
+up between runs (e.g. to poke at it manually) instead of using `test-e2e.sh`'s
+build-test-teardown wrapper.
+
+Execution role trust policy (lets the Lambda service assume the role,
+created by `setup.sh`):
 
 ```json
 {
@@ -83,14 +70,3 @@ policy is sufficient (CloudWatch Logs only; this function touches nothing
 else). No ECR permissions are needed on the execution role itself — Lambda's
 own service role pulls the image at deploy/cold-start time, not the
 function's execution role.
-
-**Not yet done — this example proves the container/protocol path works, not
-that a real AWS invocation has happened.** Run the real-deployment steps
-above once credentials are available, then update this note.
-
-## Teardown
-
-```bash
-aws lambda delete-function --function-name lambda-eio-echo
-aws ecr delete-repository --repository-name lambda-eio-echo --force
-```
