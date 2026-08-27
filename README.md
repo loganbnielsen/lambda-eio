@@ -49,6 +49,14 @@ checking the responses. No AWS account or credentials are involved: RIE is a
 self-contained local emulator of the real Runtime API, not a connection to
 AWS. This runs in CI on every push.
 
+## Deploying
+
+`examples/echo-lambda/` is a real, working deployment of this package as a
+container-image AWS Lambda function — a `Dockerfile`, a local verification
+script (also credential-free, runs in CI), and the exact `aws ecr`/`aws lambda`
+commands for a real deployment. See its README for why container images
+(not zip-based custom runtimes) are the right packaging here.
+
 ## Overview
 
 Every Lambda execution environment sets `AWS_LAMBDA_RUNTIME_API` to a `host:port`
