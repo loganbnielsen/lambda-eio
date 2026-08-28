@@ -1,6 +1,5 @@
-(* Example payloads are AWS's own published examples (Lambda sample event
-   shapes), not hand-invented shapes — same principle as aws-eio's
-   Aws_credentials tests using AWS's real API reference response shape. *)
+(* Example payloads are AWS's own published sample event shapes, not
+   hand-invented — same principle as aws-eio's Aws_credentials tests. *)
 
 let s3_event_json =
   {|{
