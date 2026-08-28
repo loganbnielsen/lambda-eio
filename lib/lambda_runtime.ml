@@ -25,10 +25,8 @@ let read_body ~max_size body = Eio.Buf_read.(parse_exn take_all) body ~max_size
 
 let client net = Cohttp_eio.Client.make ~https:None net
 
-(* Parsing invocation-next's response headers is pure and separated from
-   the network call so it's directly unit-testable with a synthetic
-   Http.Header.t, in addition to the mock-server tests that exercise the
-   whole request/response cycle. *)
+(* Kept pure and separate from the network call so it's directly
+   unit-testable with a synthetic Http.Header.t. *)
 let invocation_of_headers ~headers ~payload =
   match Http.Header.get headers "Lambda-Runtime-Aws-Request-Id" with
   | None -> Error "invocation/next response missing Lambda-Runtime-Aws-Request-Id header"
@@ -87,13 +85,10 @@ let init_error ~net ~sw ~base ~error_message ~error_type =
   post ~net ~sw ~uri ~headers:[ ("Lambda-Runtime-Function-Error-Type", "Unhandled") ]
     ~body:(error_body ~error_message ~error_type)
 
-(* Cancellation (sun-fn's Lambda-mode graceful shutdown) is only meant to
-   interrupt the *wait* for a new invocation, never abandon the ack for one
-   already received — once next_invocation returns Ok, Lambda expects a
-   response/error POST for that request_id no matter what. Eio.Cancel.protect
-   defers any outer cancellation until the handler-and-ack sequence finishes;
-   next_invocation itself stays outside the protected block, so it's still
-   the natural, immediate place a stop signal takes effect. *)
+(* Cancellation must interrupt the wait for a new invocation, never abandon
+   the ack for one already received — once next_invocation returns Ok, Lambda
+   expects a response/error POST no matter what. Eio.Cancel.protect covers
+   the handler-and-ack sequence; next_invocation stays outside it. *)
 let run_loop ~net ~sw ~base ~handler =
   let rec loop () =
     (match next_invocation ~net ~sw ~base with

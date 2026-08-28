@@ -145,11 +145,10 @@ let test_init_error_posts_to_the_right_path () =
       | Ok () -> ()
       | Error msg -> Alcotest.fail msg)
 
-(* No automated test for Cancelled re-raising in next_invocation/post: any
-   test built on Eio.Fiber.first racing a cancellation swallows the losing
-   fiber's Cancelled as part of its own cleanup regardless of whether the
-   loser's code is correct or buggy, so it can't distinguish the two.
-   Verified by inspection instead. *)
+(* No automated test for Cancelled re-raising in next_invocation/post: a test
+   built on Eio.Fiber.first racing a cancellation can't distinguish correct
+   re-raising from a bug, since the loser's Cancelled gets swallowed by
+   cleanup either way. Verified by inspection instead. *)
 
 let () =
   Alcotest.run "lambda_runtime"

@@ -1,11 +1,7 @@
-(* Not an alcotest case — this is the "bootstrap" executable rie_smoke_test.sh
-   hands to the real AWS Lambda Runtime Interface Emulator (RIE). RIE
-   implements the actual Runtime API AWS Lambda itself speaks, so running
-   Lambda_runtime.run_loop against it (rather than only against this repo's
-   own hand-rolled Cohttp_eio.Server mock in test_lambda_runtime.ml) is real
-   evidence this package's client is protocol-correct, not just consistent
-   with its own author's understanding of the protocol. Loops forever, like
-   any real Lambda bootstrap — RIE, not this process, decides when it dies. *)
+(* Not an alcotest case — the "bootstrap" executable rie_smoke_test.sh hands
+   to the real AWS Lambda Runtime Interface Emulator (RIE), giving
+   protocol-correctness evidence beyond this repo's own mock server in
+   test_lambda_runtime.ml. Loops forever; RIE decides when it dies. *)
 
 let () =
   Eio_main.run @@ fun env ->
