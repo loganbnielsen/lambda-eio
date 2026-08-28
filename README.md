@@ -11,12 +11,16 @@ Originally developed inside the [Sun](https://github.com/loganbnielsen/sun)
 platform as the runtime layer behind `sun-fn`'s `Lambda` trigger, and extracted
 here to be usable by any Eio-based OCaml Lambda function, not just Sun's.
 
-**Caution:** protocol correctness is tested end to end against both a local mock
-Runtime API server (plain HTTP, so no TLS/SNI blocker to work around) and, since
-0.1.0, against AWS's own [Runtime Interface Emulator](https://github.com/aws/aws-lambda-runtime-interface-emulator)
-— see `test/rie_smoke_test.sh`. It has not yet been run inside a real Lambda
-execution environment on AWS itself. Treat 0.1.0 accordingly until someone
-reports a real deployed invocation working.
+Protocol correctness is tested end to end against a local mock Runtime API
+server (plain HTTP, so no TLS/SNI blocker to work around), against AWS's own
+[Runtime Interface Emulator](https://github.com/aws/aws-lambda-runtime-interface-emulator)
+(`test/rie_smoke_test.sh`), and **live-proven as a real deployed AWS Lambda
+function**: `examples/echo-lambda/test-e2e.sh` builds the container image,
+pushes it to a real ECR repo, creates a scoped execution role, deploys the
+function, invokes it twice for real (a cold start and a warm reuse), and
+tears everything down afterward. Teardown was independently confirmed —
+the Lambda function, ECR repo, and IAM role were all actually gone
+afterward, not just a trusted exit code.
 
 ## Build
 
