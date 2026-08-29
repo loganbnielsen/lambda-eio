@@ -83,6 +83,7 @@ let post ~net ~sw ~uri ~headers ~body =
   | status -> if status >= 200 && status < 300 then Ok () else Error (Printf.sprintf "runtime API returned HTTP %d" status)
 
 let respond t ~request_id ~body =
+  let request_id = Uri.pct_encode ~component:`Path request_id in
   let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/%s/response" t.base request_id) in
   post ~net:t.net ~sw:t.sw ~uri ~headers:[] ~body
 
@@ -90,6 +91,7 @@ let error_body ~error_message ~error_type =
   Yojson.Safe.to_string (`Assoc [ ("errorMessage", `String error_message); ("errorType", `String error_type) ])
 
 let respond_error t ~request_id ~error_message ~error_type =
+  let request_id = Uri.pct_encode ~component:`Path request_id in
   let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/%s/error" t.base request_id) in
   post ~net:t.net ~sw:t.sw ~uri ~headers:[ ("Lambda-Runtime-Function-Error-Type", "Unhandled") ]
     ~body:(error_body ~error_message ~error_type)

@@ -28,9 +28,13 @@ val next_invocation : t -> (invocation, string) result
     can block for minutes waiting for the next event. *)
 
 val respond : t -> request_id:string -> body:string -> (unit, string) result
+(** [POST {base}/2018-06-01/runtime/invocation/{request_id}/response].
+    [request_id] is encoded as one URI path segment before sending. *)
 
 val respond_error :
   t -> request_id:string -> error_message:string -> error_type:string -> (unit, string) result
+(** [POST {base}/2018-06-01/runtime/invocation/{request_id}/error].
+    [request_id] is encoded as one URI path segment before sending. *)
 
 val init_error :
   t -> error_message:string -> error_type:string -> (unit, string) result
