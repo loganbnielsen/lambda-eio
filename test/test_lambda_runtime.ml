@@ -34,20 +34,22 @@ let test_respond_posts_to_the_right_path_with_the_right_body () =
   Eio_main.run @@ fun env ->
   let callback _conn (req : Http.Request.t) body =
     Alcotest.(check string) "method" "POST" (Http.Request.meth req |> Http.Method.to_string);
-    Alcotest.(check string) "path" "/2018-06-01/runtime/invocation/req-1/response" (Http.Request.resource req);
+    Alcotest.(check string) "path" "/2018-06-01/runtime/invocation/req%2F1%3Fx/response"
+      (Http.Request.resource req);
     let received = Eio.Buf_read.(parse_exn take_all) body ~max_size:1024 in
     Alcotest.(check string) "body" {|{"result":"ok"}|} received;
     Cohttp_eio.Server.respond_string ~status:`Accepted ~body:"" ()
   in
   with_mock_runtime_api env ~callback (fun runtime ->
-      match Lambda_runtime.respond runtime ~request_id:"req-1" ~body:{|{"result":"ok"}|} with
+      match Lambda_runtime.respond runtime ~request_id:"req/1?x" ~body:{|{"result":"ok"}|} with
       | Ok () -> ()
       | Error msg -> Alcotest.fail msg)
 
 let test_respond_error_posts_error_shape_and_header () =
   Eio_main.run @@ fun env ->
   let callback _conn (req : Http.Request.t) body =
-    Alcotest.(check string) "path" "/2018-06-01/runtime/invocation/req-2/error" (Http.Request.resource req);
+    Alcotest.(check string) "path" "/2018-06-01/runtime/invocation/req%2F2%25x/error"
+      (Http.Request.resource req);
     Alcotest.(check (option string)) "Lambda-Runtime-Function-Error-Type header" (Some "Unhandled")
       (Http.Header.get (Http.Request.headers req) "Lambda-Runtime-Function-Error-Type");
     let received = Eio.Buf_read.(parse_exn take_all) body ~max_size:1024 in
@@ -60,7 +62,7 @@ let test_respond_error_posts_error_shape_and_header () =
   in
   with_mock_runtime_api env ~callback (fun runtime ->
       match
-        Lambda_runtime.respond_error runtime ~request_id:"req-2" ~error_message:"boom"
+        Lambda_runtime.respond_error runtime ~request_id:"req/2%x" ~error_message:"boom"
           ~error_type:"RuntimeError"
       with
       | Ok () -> ()

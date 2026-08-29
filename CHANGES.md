@@ -8,6 +8,8 @@
   `Lambda-Runtime-Deadline-Ms` header instead of silently treating it as `0L`.
 - Hid `invocation_of_headers`; it is the private parser behind
   `next_invocation`, not part of the caller contract.
+- `respond` and `respond_error` now percent-encode `request_id` as one URI
+  path segment before posting to the Runtime API.
 
 ## 0.1.0
 
