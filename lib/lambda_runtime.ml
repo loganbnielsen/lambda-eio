@@ -6,6 +6,17 @@ type invocation = {
   payload : string;
 }
 
+type t = {
+  net : [`Generic] Eio.Net.ty Eio.Std.r;
+  sw : Eio.Switch.t;
+  base : string;
+}
+
+let create ~net ~sw ~base =
+  { net = (net :> [`Generic] Eio.Net.ty Eio.Std.r); sw; base }
+
+let ( let* ) = Result.bind
+
 let runtime_api_base () =
   match Sys.getenv_opt "AWS_LAMBDA_RUNTIME_API" with
   | Some base -> Ok base
@@ -31,10 +42,13 @@ let invocation_of_headers ~headers ~payload =
   match Http.Header.get headers "Lambda-Runtime-Aws-Request-Id" with
   | None -> Error "invocation/next response missing Lambda-Runtime-Aws-Request-Id header"
   | Some request_id ->
-    let deadline_ms =
+    let* deadline_ms =
       match Http.Header.get headers "Lambda-Runtime-Deadline-Ms" with
-      | Some s -> Option.value (Int64.of_string_opt s) ~default:0L
-      | None -> 0L
+      | Some s -> (
+        match Int64.of_string_opt s with
+        | Some deadline -> Ok deadline
+        | None -> Error "invocation/next response has malformed Lambda-Runtime-Deadline-Ms header")
+      | None -> Ok 0L
     in
     let invoked_function_arn = Option.value (Http.Header.get headers "Lambda-Runtime-Invoked-Function-Arn") ~default:"" in
     let trace_id = Http.Header.get headers "Lambda-Runtime-Trace-Id" in
@@ -43,10 +57,10 @@ let invocation_of_headers ~headers ~payload =
 (* Eio.Cancel.Cancelled is always re-raised, never converted to an Error —
    it has to unwind the caller's structured concurrency correctly, not get
    reported as an ordinary result. *)
-let next_invocation ~net ~sw ~base =
-  let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/next" base) in
+let next_invocation t =
+  let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/next" t.base) in
   match
-    let resp, body = Cohttp_eio.Client.get (client net) ~sw uri in
+    let resp, body = Cohttp_eio.Client.get (client t.net) ~sw:t.sw uri in
     let status = Http.Response.status resp |> Http.Status.to_int in
     let payload = read_body ~max_size:max_invocation_payload_bytes body in
     (status, resp, payload)
@@ -68,30 +82,30 @@ let post ~net ~sw ~uri ~headers ~body =
   | exception exn -> Error (Printexc.to_string exn)
   | status -> if status >= 200 && status < 300 then Ok () else Error (Printf.sprintf "runtime API returned HTTP %d" status)
 
-let respond ~net ~sw ~base ~request_id ~body =
-  let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/%s/response" base request_id) in
-  post ~net ~sw ~uri ~headers:[] ~body
+let respond t ~request_id ~body =
+  let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/%s/response" t.base request_id) in
+  post ~net:t.net ~sw:t.sw ~uri ~headers:[] ~body
 
 let error_body ~error_message ~error_type =
   Yojson.Safe.to_string (`Assoc [ ("errorMessage", `String error_message); ("errorType", `String error_type) ])
 
-let respond_error ~net ~sw ~base ~request_id ~error_message ~error_type =
-  let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/%s/error" base request_id) in
-  post ~net ~sw ~uri ~headers:[ ("Lambda-Runtime-Function-Error-Type", "Unhandled") ]
+let respond_error t ~request_id ~error_message ~error_type =
+  let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/%s/error" t.base request_id) in
+  post ~net:t.net ~sw:t.sw ~uri ~headers:[ ("Lambda-Runtime-Function-Error-Type", "Unhandled") ]
     ~body:(error_body ~error_message ~error_type)
 
-let init_error ~net ~sw ~base ~error_message ~error_type =
-  let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/init/error" base) in
-  post ~net ~sw ~uri ~headers:[ ("Lambda-Runtime-Function-Error-Type", "Unhandled") ]
+let init_error t ~error_message ~error_type =
+  let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/init/error" t.base) in
+  post ~net:t.net ~sw:t.sw ~uri ~headers:[ ("Lambda-Runtime-Function-Error-Type", "Unhandled") ]
     ~body:(error_body ~error_message ~error_type)
 
 (* Cancellation must interrupt the wait for a new invocation, never abandon
    the ack for one already received — once next_invocation returns Ok, Lambda
    expects a response/error POST no matter what. Eio.Cancel.protect covers
    the handler-and-ack sequence; next_invocation stays outside it. *)
-let run_loop ~net ~sw ~base ~handler =
+let run_loop t ~handler =
   let rec loop () =
-    (match next_invocation ~net ~sw ~base with
+    (match next_invocation t with
      | Error msg ->
        (* Transient failures must not kill the loop — a warm execution
           environment is expected to keep calling next_invocation for its
@@ -106,12 +120,12 @@ let run_loop ~net ~sw ~base ~handler =
          in
          match result with
          | Ok body -> (
-           match respond ~net ~sw ~base ~request_id:invocation.request_id ~body with
+           match respond t ~request_id:invocation.request_id ~body with
            | Ok () -> ()
            | Error msg -> Printf.eprintf "lambda-eio: respond failed: %s\n%!" msg)
          | Error msg -> (
            match
-             respond_error ~net ~sw ~base ~request_id:invocation.request_id ~error_message:msg
+             respond_error t ~request_id:invocation.request_id ~error_message:msg
                ~error_type:"HandlerError"
            with
            | Ok () -> ()

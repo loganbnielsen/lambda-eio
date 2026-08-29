@@ -1,5 +1,14 @@
 # Changes
 
+## Unreleased
+
+- `Lambda_runtime` now has an explicit handle (`create`, then operations on
+  `t`) instead of repeating `~net ~sw ~base` on every Runtime API call.
+- `next_invocation` now rejects a present but malformed
+  `Lambda-Runtime-Deadline-Ms` header instead of silently treating it as `0L`.
+- Hid `invocation_of_headers`; it is the private parser behind
+  `next_invocation`, not part of the caller contract.
+
 ## 0.1.0
 
 - Initial standalone opam package, extracted from Sun: `Lambda_runtime` (the
