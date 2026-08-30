@@ -1,3 +1,8 @@
+let contains haystack needle =
+  let hl = String.length haystack and nl = String.length needle in
+  let rec go i = i + nl <= hl && (String.sub haystack i nl = needle || go (i + 1)) in
+  nl = 0 || go 0
+
 (* Mock Runtime API server — plain HTTP, no TLS/SNI blocker here (unlike
    s3-eio/dynamo-eio's aws-eio-backed tests), so this exercises the real
    wire path end to end. *)
@@ -76,6 +81,22 @@ let test_post_error_status_is_reported () =
         (match Lambda_runtime.respond runtime ~request_id:"req-3" ~body:"{}" with
          | Error _ -> true
          | Ok () -> false))
+
+(* Regression test: a non-2xx response body used to be read (to drain the
+   connection) and then discarded, reporting only the status code — exactly
+   the diagnostic detail an operator needs when the Runtime API sidecar
+   itself is misbehaving. *)
+let test_post_error_includes_response_body () =
+  Eio_main.run @@ fun env ->
+  let callback _conn _req _body =
+    Cohttp_eio.Server.respond_string ~status:`Bad_request ~body:"stale Lambda-Runtime-Aws-Request-Id" ()
+  in
+  with_mock_runtime_api env ~callback (fun runtime ->
+      match Lambda_runtime.respond runtime ~request_id:"req-3" ~body:"{}" with
+      | Ok () -> Alcotest.fail "expected a non-2xx status to be an Error"
+      | Error msg ->
+        Alcotest.(check bool) "error message includes the response body" true
+          (contains msg "stale Lambda-Runtime-Aws-Request-Id"))
 
 (* A broken/misconfigured Runtime API endpoint could return a non-2xx status
    while still carrying a stale Lambda-Runtime-Aws-Request-Id header (e.g.
@@ -158,6 +179,8 @@ let () =
           Alcotest.test_case "respond" `Quick test_respond_posts_to_the_right_path_with_the_right_body;
           Alcotest.test_case "respond_error" `Quick test_respond_error_posts_error_shape_and_header;
           Alcotest.test_case "non-2xx from the Runtime API is reported" `Quick test_post_error_status_is_reported;
+          Alcotest.test_case "non-2xx error includes the response body" `Quick
+            test_post_error_includes_response_body;
           Alcotest.test_case "next_invocation rejects non-2xx" `Quick test_next_invocation_rejects_non_2xx;
           Alcotest.test_case "next_invocation rejects missing request id" `Quick
             test_next_invocation_rejects_missing_request_id;
