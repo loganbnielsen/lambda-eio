@@ -13,4 +13,4 @@ let () =
     Eio.Switch.run @@ fun sw ->
     let runtime = Lambda_runtime.create ~net:env#net ~sw ~base in
     Lambda_runtime.run_loop runtime ~handler:(fun (inv : Lambda_runtime.invocation) ->
-        Ok (Printf.sprintf {|{"echoed":%s}|} inv.payload))
+        Ok (Printf.sprintf {|{"echoed":%s}|} inv.payload)) ()

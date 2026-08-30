@@ -34,6 +34,11 @@ let max_invocation_payload_bytes = 6 * 1024 * 1024
 
 let read_body ~max_size body = Eio.Buf_read.(parse_exn take_all) body ~max_size
 
+let truncate s =
+  let max_len = 500 in
+  if String.length s <= max_len then s
+  else String.sub s 0 max_len ^ "... (truncated)"
+
 let client net = Cohttp_eio.Client.make ~https:None net
 
 (* Kept pure and separate from the network call so it's directly
@@ -67,20 +72,22 @@ let next_invocation t =
   with
   | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
   | exception exn -> Error ("next_invocation: " ^ Printexc.to_string exn)
-  | status, _, _ when status < 200 || status >= 300 ->
-    Error (Printf.sprintf "invocation/next returned HTTP %d" status)
+  | status, _, payload when status < 200 || status >= 300 ->
+    Error (Printf.sprintf "invocation/next returned HTTP %d: %s" status (truncate payload))
   | _, resp, payload -> invocation_of_headers ~headers:(Http.Response.headers resp) ~payload
 
 let post ~net ~sw ~uri ~headers ~body =
   match
     let resp, resp_body = Cohttp_eio.Client.post (client net) ~sw ~headers:(Http.Header.of_list headers) ~body:(Cohttp_eio.Body.of_string body) uri in
     let status = Http.Response.status resp |> Http.Status.to_int in
-    ignore (read_body ~max_size:max_response_body_bytes resp_body);
-    status
+    let resp_body = read_body ~max_size:max_response_body_bytes resp_body in
+    (status, resp_body)
   with
   | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
   | exception exn -> Error (Printexc.to_string exn)
-  | status -> if status >= 200 && status < 300 then Ok () else Error (Printf.sprintf "runtime API returned HTTP %d" status)
+  | status, resp_body ->
+    if status >= 200 && status < 300 then Ok ()
+    else Error (Printf.sprintf "runtime API returned HTTP %d: %s" status (truncate resp_body))
 
 let respond t ~request_id ~body =
   let request_id = Uri.pct_encode ~component:`Path request_id in
@@ -105,14 +112,16 @@ let init_error t ~error_message ~error_type =
    the ack for one already received — once next_invocation returns Ok, Lambda
    expects a response/error POST no matter what. Eio.Cancel.protect covers
    the handler-and-ack sequence; next_invocation stays outside it. *)
-let run_loop t ~handler =
+let default_on_error msg = Printf.eprintf "lambda-eio: %s\n%!" msg
+
+let run_loop t ?(on_error = default_on_error) ~handler () =
   let rec loop () =
     (match next_invocation t with
      | Error msg ->
        (* Transient failures must not kill the loop — a warm execution
           environment is expected to keep calling next_invocation for its
           entire lifetime. *)
-       Printf.eprintf "lambda-eio: next_invocation failed: %s\n%!" msg
+       on_error ("next_invocation failed: " ^ msg)
      | Ok invocation ->
        Eio.Cancel.protect (fun () ->
          let result =
@@ -124,14 +133,14 @@ let run_loop t ~handler =
          | Ok body -> (
            match respond t ~request_id:invocation.request_id ~body with
            | Ok () -> ()
-           | Error msg -> Printf.eprintf "lambda-eio: respond failed: %s\n%!" msg)
+           | Error msg -> on_error ("respond failed: " ^ msg))
          | Error msg -> (
            match
              respond_error t ~request_id:invocation.request_id ~error_message:msg
                ~error_type:"HandlerError"
            with
            | Ok () -> ()
-           | Error post_msg -> Printf.eprintf "lambda-eio: respond_error failed: %s\n%!" post_msg)));
+           | Error post_msg -> on_error ("respond_error failed: " ^ post_msg))));
     loop ()
   in
   loop ()

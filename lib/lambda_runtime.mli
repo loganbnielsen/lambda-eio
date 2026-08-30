@@ -41,10 +41,21 @@ val init_error :
 (** [POST {base}/2018-06-01/runtime/init/error] — for a failure before the
     loop below ever starts, distinct from a per-invocation error. *)
 
-val run_loop : t -> handler:(invocation -> (string, string) result) -> unit
+val run_loop
+  :  t
+  -> ?on_error:(string -> unit)
+  -> handler:(invocation -> (string, string) result)
+  -> unit
+  -> unit
 (** Loops forever: [next_invocation], run [handler], [respond]/
     [respond_error]. A handler exception is caught and reported via
     [respond_error] rather than propagating — one bad invocation must not
     crash the whole warm execution environment for every future invocation.
-    A transient [next_invocation] failure is logged to stderr and retried,
-    not fatal, for the same reason. *)
+    A transient [next_invocation] failure, or a failed [respond]/
+    [respond_error]/[next_invocation] POST, is not fatal and does not stop
+    the loop — it's reported to [on_error] instead (default: one line to
+    stderr). These are exactly the operational signals ("the Runtime API
+    sidecar is flaky," "we couldn't even report a handler error back to
+    Lambda") an operator needs during an incident; pass [on_error] to route
+    them into your own logging/observability backend instead of bare
+    stderr. *)
