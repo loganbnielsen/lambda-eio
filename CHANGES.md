@@ -4,8 +4,9 @@
 
 - `Lambda_runtime` now has an explicit handle (`create`, then operations on
   `t`) instead of repeating `~net ~sw ~base` on every Runtime API call.
-- `next_invocation` now rejects a present but malformed
-  `Lambda-Runtime-Deadline-Ms` header instead of silently treating it as `0L`.
+- `next_invocation` now rejects missing or malformed
+  `Lambda-Runtime-Deadline-Ms` headers instead of silently treating them as
+  `0L`.
 - Hid `invocation_of_headers`; it is the private parser behind
   `next_invocation`, not part of the caller contract.
 - `respond` and `respond_error` now percent-encode `request_id` as one URI

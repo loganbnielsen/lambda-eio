@@ -48,7 +48,7 @@ let invocation_of_headers ~headers ~payload =
         match Int64.of_string_opt s with
         | Some deadline -> Ok deadline
         | None -> Error "invocation/next response has malformed Lambda-Runtime-Deadline-Ms header")
-      | None -> Ok 0L
+      | None -> Error "invocation/next response missing Lambda-Runtime-Deadline-Ms header"
     in
     let invoked_function_arn = Option.value (Http.Header.get headers "Lambda-Runtime-Invoked-Function-Arn") ~default:"" in
     let trace_id = Http.Header.get headers "Lambda-Runtime-Trace-Id" in
