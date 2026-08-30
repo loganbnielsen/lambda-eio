@@ -58,4 +58,9 @@ val run_loop
     sidecar is flaky," "we couldn't even report a handler error back to
     Lambda") an operator needs during an incident; pass [on_error] to route
     them into your own logging/observability backend instead of bare
-    stderr. *)
+    stderr. [on_error] is always called outside the protected
+    handler-and-ack sequence, so it's safe for it to block or do its own
+    I/O — it can be interrupted by cancellation like any other code, unlike
+    [handler] and the [respond]/[respond_error] POST themselves, which are
+    protected so an accepted invocation always gets an ack even under
+    external cancellation. *)
