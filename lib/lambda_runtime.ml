@@ -158,7 +158,7 @@ let run_loop t ~clock ?(on_error = default_on_error) ~handler () =
             | Ok () -> ()
             | Error msg -> on_error msg);
            raise exn
-         | (Out_of_memory | Stack_overflow) as exn -> raise exn
+         | (Out_of_memory | Stack_overflow | Sys.Break) as exn -> raise exn
          | exn -> Error (Printexc.to_string exn)
        in
        let post_result =
