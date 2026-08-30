@@ -59,9 +59,9 @@ let invocation_of_headers ~headers ~payload =
     let trace_id = Http.Header.get headers "Lambda-Runtime-Trace-Id" in
     Ok { request_id; deadline_ms; invoked_function_arn; trace_id; payload }
 
-(* Eio.Cancel.Cancelled is always re-raised, never converted to an Error —
-   it has to unwind the caller's structured concurrency correctly, not get
-   reported as an ordinary result. *)
+(* Cancellation and runtime-fatal exceptions are always re-raised, never
+   converted to Error — they have to unwind correctly, not get reported as
+   ordinary Lambda Runtime API failures. *)
 let next_invocation t =
   let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/next" t.base) in
   match
@@ -71,7 +71,7 @@ let next_invocation t =
     (status, resp, payload)
   with
   | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
-  | exception ((Out_of_memory | Stack_overflow) as exn) -> raise exn
+  | exception ((Out_of_memory | Stack_overflow | Sys.Break) as exn) -> raise exn
   | exception exn -> Error ("next_invocation: " ^ Printexc.to_string exn)
   | status, _, payload when status < 200 || status >= 300 ->
     Error (Printf.sprintf "invocation/next returned HTTP %d: %s" status (truncate payload))
@@ -85,7 +85,7 @@ let post ~net ~sw ~uri ~headers ~body =
     (status, resp_body)
   with
   | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
-  | exception ((Out_of_memory | Stack_overflow) as exn) -> raise exn
+  | exception ((Out_of_memory | Stack_overflow | Sys.Break) as exn) -> raise exn
   | exception exn -> Error (Printexc.to_string exn)
   | status, resp_body ->
     if status >= 200 && status < 300 then Ok ()
