@@ -206,13 +206,40 @@ let test_on_error_runs_outside_the_protected_ack_sequence () =
       in
       let t0 = Eio.Time.now env#clock in
       Eio.Fiber.first
-        (fun () -> Lambda_runtime.run_loop runtime ~on_error ~handler:(fun _ -> Ok "{}") ())
+        (fun () -> Lambda_runtime.run_loop runtime ~clock:env#clock ~on_error ~handler:(fun _ -> Ok "{}") ())
         (fun () -> Eio.Time.sleep env#clock 0.1);
       let elapsed = Eio.Time.now env#clock -. t0 in
       Alcotest.(check bool) "on_error was invoked" true !on_error_called;
       Alcotest.(check bool)
         "on_error's sleep was interrupted by cancellation, not run to completion"
         true (elapsed < 1.0))
+
+(* Regression test: a persistently failing next_invocation used to retry
+   with no delay at all — a busy-spin issuing as many requests per second
+   as the CPU allows for the duration of the outage. Runs run_loop for a
+   bounded window against a server that always fails /invocation/next, and
+   counts how many times it was actually hit — with the fixed backoff this
+   should be a handful of attempts over the window, not hundreds. *)
+let test_next_invocation_failure_backs_off () =
+  Eio_main.run @@ fun env ->
+  let hits = ref 0 in
+  let callback _conn _req body =
+    ignore (Eio.Buf_read.(parse_exn take_all) body ~max_size:1024);
+    incr hits;
+    Cohttp_eio.Server.respond_string ~status:`Internal_server_error ~body:"" ()
+  in
+  with_mock_runtime_api env ~callback (fun runtime ->
+      Eio.Fiber.first
+        (fun () ->
+          Lambda_runtime.run_loop runtime ~clock:env#clock
+            ~on_error:(fun _ -> ())
+            ~handler:(fun _ -> Ok "{}") ())
+        (fun () -> Eio.Time.sleep env#clock 1.2);
+      (* ~1.2s window / 0.5s backoff ~= 2-3 attempts; hundreds would mean
+         no backoff at all. *)
+      Alcotest.(check bool)
+        (Printf.sprintf "backed off instead of busy-spinning (%d attempts in 1.2s)" !hits)
+        true (!hits > 0 && !hits <= 6))
 
 let () =
   Alcotest.run "lambda_runtime"
@@ -233,5 +260,7 @@ let () =
           Alcotest.test_case "init_error" `Quick test_init_error_posts_to_the_right_path;
           Alcotest.test_case "on_error runs outside the protected ack sequence" `Quick
             test_on_error_runs_outside_the_protected_ack_sequence;
+          Alcotest.test_case "next_invocation failure backs off instead of busy-spinning" `Quick
+            test_next_invocation_failure_backs_off;
         ] );
     ]

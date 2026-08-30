@@ -43,6 +43,7 @@ val init_error :
 
 val run_loop
   :  t
+  -> clock:_ Eio.Time.clock
   -> ?on_error:(string -> unit)
   -> handler:(invocation -> (string, string) result)
   -> unit
@@ -54,11 +55,14 @@ val run_loop
     A transient [next_invocation] failure, or a failed [respond]/
     [respond_error]/[next_invocation] POST, is not fatal and does not stop
     the loop — it's reported to [on_error] instead (default: one line to
-    stderr). These are exactly the operational signals ("the Runtime API
-    sidecar is flaky," "we couldn't even report a handler error back to
-    Lambda") an operator needs during an incident; pass [on_error] to route
-    them into your own logging/observability backend instead of bare
-    stderr. [on_error] is always called outside the protected
+    stderr), and (for a [next_invocation] failure specifically) followed by
+    a short pause on [clock] before retrying, so a persistently unreachable
+    Runtime API sidecar doesn't turn this into a busy-spin. These are
+    exactly the operational signals ("the Runtime API sidecar is flaky,"
+    "we couldn't even report a handler error back to Lambda") an operator
+    needs during an incident; pass [on_error] to route them into your own
+    logging/observability backend instead of bare stderr. [on_error] is
+    always called outside the protected
     handler-and-ack sequence, so it's safe for it to block or do its own
     I/O — it can be interrupted by cancellation like any other code, unlike
     [handler] and the [respond]/[respond_error] POST themselves, which are
