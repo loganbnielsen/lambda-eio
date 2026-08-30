@@ -127,6 +127,12 @@ let default_on_error msg = Printf.eprintf "lambda-eio: %s\n%!" msg
 let next_invocation_retry_delay = 0.5
 
 let run_loop t ~clock ?(on_error = default_on_error) ~handler () =
+  let report_invocation_error invocation msg =
+    Eio.Cancel.protect (fun () ->
+      respond_error t ~request_id:invocation.request_id ~error_message:msg
+        ~error_type:"HandlerError"
+      |> Result.map_error (fun post_msg -> "respond_error failed: " ^ post_msg))
+  in
   let rec loop () =
     (match next_invocation t with
      | Error msg ->
@@ -145,21 +151,23 @@ let run_loop t ~clock ?(on_error = default_on_error) ~handler () =
           would make it uninterruptible by cancellation too, defeating
           graceful shutdown for reasons that have nothing to do with the
           ack guarantee protect exists for. *)
+       let result =
+         try handler invocation with
+         | Eio.Cancel.Cancelled _ as exn ->
+           (match report_invocation_error invocation (Printexc.to_string exn) with
+            | Ok () -> ()
+            | Error msg -> on_error msg);
+           raise exn
+         | (Out_of_memory | Stack_overflow) as exn -> raise exn
+         | exn -> Error (Printexc.to_string exn)
+       in
        let post_result =
-         Eio.Cancel.protect (fun () ->
-           let result =
-             try handler invocation with
-             | Eio.Cancel.Cancelled _ as exn -> raise exn
-             | exn -> Error (Printexc.to_string exn)
-           in
-           match result with
-           | Ok body ->
+         match result with
+         | Ok body ->
+           Eio.Cancel.protect (fun () ->
              respond t ~request_id:invocation.request_id ~body
-             |> Result.map_error (fun msg -> "respond failed: " ^ msg)
-           | Error msg ->
-             respond_error t ~request_id:invocation.request_id ~error_message:msg
-               ~error_type:"HandlerError"
-             |> Result.map_error (fun post_msg -> "respond_error failed: " ^ post_msg))
+             |> Result.map_error (fun msg -> "respond failed: " ^ msg))
+         | Error msg -> report_invocation_error invocation msg
        in
        (match post_result with
         | Ok () -> ()

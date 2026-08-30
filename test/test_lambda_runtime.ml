@@ -214,6 +214,45 @@ let test_on_error_runs_outside_the_protected_ack_sequence () =
         "on_error's sleep was interrupted by cancellation, not run to completion"
         true (elapsed < 1.0))
 
+let test_handler_runs_outside_the_protected_ack_sequence () =
+  Eio_main.run @@ fun env ->
+  let error_seen = ref false in
+  let callback _conn (req : Http.Request.t) body =
+    ignore (Eio.Buf_read.(parse_exn take_all) body ~max_size:1024);
+    match Http.Request.resource req with
+    | "/2018-06-01/runtime/invocation/next" ->
+      let headers =
+        Http.Header.of_list
+          [ ("Lambda-Runtime-Aws-Request-Id", "req-handler-cancelled");
+            ("Lambda-Runtime-Deadline-Ms", "9999999999999");
+          ]
+      in
+      Cohttp_eio.Server.respond_string ~status:`OK ~headers ~body:"{}" ()
+    | "/2018-06-01/runtime/invocation/req-handler-cancelled/error" ->
+      error_seen := true;
+      Cohttp_eio.Server.respond_string ~status:`Accepted ~body:"" ()
+    | path ->
+      Alcotest.failf "unexpected Runtime API path: %s" path
+  in
+  with_mock_runtime_api env ~callback (fun runtime ->
+      let t0 = Eio.Time.now env#clock in
+      Eio.Fiber.first
+        (fun () ->
+          Lambda_runtime.run_loop runtime ~clock:env#clock
+            ~on_error:(fun msg -> Alcotest.fail msg)
+            ~handler:(fun _ ->
+              Eio.Time.sleep env#clock 2.0;
+              Ok "{}")
+            ())
+        (fun () -> Eio.Time.sleep env#clock 0.1);
+      let elapsed = Eio.Time.now env#clock -. t0 in
+      Alcotest.(check bool)
+        "handler sleep was interrupted by cancellation"
+        true (elapsed < 1.0);
+      Alcotest.(check bool)
+        "cancelled invocation was reported to Runtime API"
+        true !error_seen)
+
 (* Regression test: a persistently failing next_invocation used to retry
    with no delay at all — a busy-spin issuing as many requests per second
    as the CPU allows for the duration of the outage. Runs run_loop for a
@@ -260,6 +299,8 @@ let () =
           Alcotest.test_case "init_error" `Quick test_init_error_posts_to_the_right_path;
           Alcotest.test_case "on_error runs outside the protected ack sequence" `Quick
             test_on_error_runs_outside_the_protected_ack_sequence;
+          Alcotest.test_case "handler runs outside the protected ack sequence" `Quick
+            test_handler_runs_outside_the_protected_ack_sequence;
           Alcotest.test_case "next_invocation failure backs off instead of busy-spinning" `Quick
             test_next_invocation_failure_backs_off;
         ] );
