@@ -118,6 +118,18 @@ let test_next_invocation_rejects_malformed_deadline () =
       Alcotest.(check bool) "malformed deadline is rejected" true
         (match Lambda_runtime.next_invocation runtime with Error _ -> true | Ok _ -> false))
 
+let test_next_invocation_rejects_missing_deadline () =
+  Eio_main.run @@ fun env ->
+  let callback _conn _req _body =
+    let headers =
+      Http.Header.of_list [ ("Lambda-Runtime-Aws-Request-Id", "req-1") ]
+    in
+    Cohttp_eio.Server.respond_string ~status:`OK ~headers ~body:"{}" ()
+  in
+  with_mock_runtime_api env ~callback (fun runtime ->
+      Alcotest.(check bool) "missing deadline is rejected" true
+        (match Lambda_runtime.next_invocation runtime with Error _ -> true | Ok _ -> false))
+
 let test_init_error_posts_to_the_right_path () =
   Eio_main.run @@ fun env ->
   let callback _conn (req : Http.Request.t) body =
@@ -151,6 +163,8 @@ let () =
             test_next_invocation_rejects_missing_request_id;
           Alcotest.test_case "next_invocation rejects malformed deadline" `Quick
             test_next_invocation_rejects_malformed_deadline;
+          Alcotest.test_case "next_invocation rejects missing deadline" `Quick
+            test_next_invocation_rejects_missing_deadline;
           Alcotest.test_case "init_error" `Quick test_init_error_posts_to_the_right_path;
         ] );
     ]
