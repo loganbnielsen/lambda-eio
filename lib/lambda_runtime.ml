@@ -110,8 +110,9 @@ let init_error t ~error_message ~error_type =
 
 (* Cancellation must interrupt the wait for a new invocation, never abandon
    the ack for one already received — once next_invocation returns Ok, Lambda
-   expects a response/error POST no matter what. Eio.Cancel.protect covers
-   the handler-and-ack sequence; next_invocation stays outside it. *)
+   expects a response/error POST no matter what. next_invocation stays
+   outside the protected region in run_loop below; see there for what is
+   and isn't protected within it. *)
 let default_on_error msg = Printf.eprintf "lambda-eio: %s\n%!" msg
 
 let run_loop t ?(on_error = default_on_error) ~handler () =
@@ -123,24 +124,34 @@ let run_loop t ?(on_error = default_on_error) ~handler () =
           entire lifetime. *)
        on_error ("next_invocation failed: " ^ msg)
      | Ok invocation ->
-       Eio.Cancel.protect (fun () ->
-         let result =
-           try handler invocation with
-           | Eio.Cancel.Cancelled _ as exn -> raise exn
-           | exn -> Error (Printexc.to_string exn)
-         in
-         match result with
-         | Ok body -> (
-           match respond t ~request_id:invocation.request_id ~body with
-           | Ok () -> ()
-           | Error msg -> on_error ("respond failed: " ^ msg))
-         | Error msg -> (
-           match
+       (* Only the handler-and-ack sequence itself is protected from
+          cancellation — once next_invocation returns Ok, Lambda expects a
+          response/error POST no matter what. on_error is deliberately
+          called after protect returns, not inside it: on_error is
+          caller-supplied and may do its own I/O (push to a logging
+          backend), and a caller-supplied hook blocking inside protect
+          would make it uninterruptible by cancellation too, defeating
+          graceful shutdown for reasons that have nothing to do with the
+          ack guarantee protect exists for. *)
+       let post_result =
+         Eio.Cancel.protect (fun () ->
+           let result =
+             try handler invocation with
+             | Eio.Cancel.Cancelled _ as exn -> raise exn
+             | exn -> Error (Printexc.to_string exn)
+           in
+           match result with
+           | Ok body ->
+             respond t ~request_id:invocation.request_id ~body
+             |> Result.map_error (fun msg -> "respond failed: " ^ msg)
+           | Error msg ->
              respond_error t ~request_id:invocation.request_id ~error_message:msg
                ~error_type:"HandlerError"
-           with
-           | Ok () -> ()
-           | Error post_msg -> on_error ("respond_error failed: " ^ post_msg))));
+             |> Result.map_error (fun post_msg -> "respond_error failed: " ^ post_msg))
+       in
+       (match post_result with
+        | Ok () -> ()
+        | Error msg -> on_error msg));
     loop ()
   in
   loop ()

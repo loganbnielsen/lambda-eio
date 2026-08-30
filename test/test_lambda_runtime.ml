@@ -172,6 +172,48 @@ let test_init_error_posts_to_the_right_path () =
    re-raising from a bug, since the loser's Cancelled gets swallowed by
    cleanup either way. Verified by inspection instead. *)
 
+(* Regression test for on_error being called outside Eio.Cancel.protect:
+   this ISN'T subject to the "Cancelled always gets swallowed" limitation
+   above — it doesn't inspect the exception outcome at all, only elapsed
+   wall-clock time, which differs sharply between the two cases. on_error
+   blocks in a long sleep; a racing fiber requests cancellation almost
+   immediately. If on_error is (bug-wise) still shielded by protect, the
+   sleep runs to completion before the pending cancellation is ever
+   delivered — the whole test takes ~2s. If on_error is correctly outside
+   protect, the sleep is interrupted right away — the test finishes in a
+   fraction of a second. *)
+let test_on_error_runs_outside_the_protected_ack_sequence () =
+  Eio_main.run @@ fun env ->
+  let callback _conn (req : Http.Request.t) body =
+    ignore (Eio.Buf_read.(parse_exn take_all) body ~max_size:1024);
+    if Http.Request.resource req = "/2018-06-01/runtime/invocation/next" then
+      let headers =
+        Http.Header.of_list
+          [ ("Lambda-Runtime-Aws-Request-Id", "req-on-error-1");
+            ("Lambda-Runtime-Deadline-Ms", "9999999999999");
+          ]
+      in
+      Cohttp_eio.Server.respond_string ~status:`OK ~headers ~body:"{}" ()
+    else
+      (* The /response POST — fail it so on_error fires. *)
+      Cohttp_eio.Server.respond_string ~status:`Bad_request ~body:"" ()
+  in
+  with_mock_runtime_api env ~callback (fun runtime ->
+      let on_error_called = ref false in
+      let on_error _msg =
+        on_error_called := true;
+        Eio.Time.sleep env#clock 2.0
+      in
+      let t0 = Eio.Time.now env#clock in
+      Eio.Fiber.first
+        (fun () -> Lambda_runtime.run_loop runtime ~on_error ~handler:(fun _ -> Ok "{}") ())
+        (fun () -> Eio.Time.sleep env#clock 0.1);
+      let elapsed = Eio.Time.now env#clock -. t0 in
+      Alcotest.(check bool) "on_error was invoked" true !on_error_called;
+      Alcotest.(check bool)
+        "on_error's sleep was interrupted by cancellation, not run to completion"
+        true (elapsed < 1.0))
+
 let () =
   Alcotest.run "lambda_runtime"
     [ ( "wire protocol (real local mock server)",
@@ -189,5 +231,7 @@ let () =
           Alcotest.test_case "next_invocation rejects missing deadline" `Quick
             test_next_invocation_rejects_missing_deadline;
           Alcotest.test_case "init_error" `Quick test_init_error_posts_to_the_right_path;
+          Alcotest.test_case "on_error runs outside the protected ack sequence" `Quick
+            test_on_error_runs_outside_the_protected_ack_sequence;
         ] );
     ]
