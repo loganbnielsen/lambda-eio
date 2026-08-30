@@ -71,6 +71,7 @@ let next_invocation t =
     (status, resp, payload)
   with
   | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
+  | exception ((Out_of_memory | Stack_overflow) as exn) -> raise exn
   | exception exn -> Error ("next_invocation: " ^ Printexc.to_string exn)
   | status, _, payload when status < 200 || status >= 300 ->
     Error (Printf.sprintf "invocation/next returned HTTP %d: %s" status (truncate payload))
@@ -84,6 +85,7 @@ let post ~net ~sw ~uri ~headers ~body =
     (status, resp_body)
   with
   | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
+  | exception ((Out_of_memory | Stack_overflow) as exn) -> raise exn
   | exception exn -> Error (Printexc.to_string exn)
   | status, resp_body ->
     if status >= 200 && status < 300 then Ok ()
@@ -115,14 +117,24 @@ let init_error t ~error_message ~error_type =
    and isn't protected within it. *)
 let default_on_error msg = Printf.eprintf "lambda-eio: %s\n%!" msg
 
-let run_loop t ?(on_error = default_on_error) ~handler () =
+(* A persistently failing next_invocation (the Runtime API sidecar itself
+   unreachable, not a one-off failure) is effectively unrecoverable from
+   inside the function — retrying immediately in a tight loop would just
+   busy-spin for however long the outage lasts. A short fixed pause is
+   enough to stop that; not real backoff tuning, since there's no rate
+   limit to respect here and nothing this loop can do to fix the
+   underlying problem faster by waiting longer. *)
+let next_invocation_retry_delay = 0.5
+
+let run_loop t ~clock ?(on_error = default_on_error) ~handler () =
   let rec loop () =
     (match next_invocation t with
      | Error msg ->
        (* Transient failures must not kill the loop — a warm execution
           environment is expected to keep calling next_invocation for its
           entire lifetime. *)
-       on_error ("next_invocation failed: " ^ msg)
+       on_error ("next_invocation failed: " ^ msg);
+       Eio.Time.sleep clock next_invocation_retry_delay
      | Ok invocation ->
        (* Only the handler-and-ack sequence itself is protected from
           cancellation — once next_invocation returns Ok, Lambda expects a
