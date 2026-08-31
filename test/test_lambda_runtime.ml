@@ -16,7 +16,7 @@ let with_mock_runtime_api env ~callback f =
       Cohttp_eio.Server.run ~stop ~on_error:(fun _ -> ()) socket server;
       `Stop_daemon);
   Fun.protect ~finally:(fun () -> Eio.Promise.resolve stop_r ()) (fun () ->
-      f (Lambda_runtime.create ~net:env#net ~sw ~base:(Printf.sprintf "127.0.0.1:%d" port)))
+      f (Lambda_runtime.create ~net:env#net ~base:(Printf.sprintf "127.0.0.1:%d" port)))
 
 let test_next_invocation_real_call () =
   Eio_main.run @@ fun env ->

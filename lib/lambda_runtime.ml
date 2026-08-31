@@ -8,12 +8,11 @@ type invocation = {
 
 type t = {
   net : [`Generic] Eio.Net.ty Eio.Std.r;
-  sw : Eio.Switch.t;
   base : string;
 }
 
-let create ~net ~sw ~base =
-  { net = (net :> [`Generic] Eio.Net.ty Eio.Std.r); sw; base }
+let create ~net ~base =
+  { net = (net :> [`Generic] Eio.Net.ty Eio.Std.r); base }
 
 let ( let* ) = Result.bind
 
@@ -65,10 +64,11 @@ let invocation_of_headers ~headers ~payload =
 let next_invocation t =
   let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/next" t.base) in
   match
-    let resp, body = Cohttp_eio.Client.get (client t.net) ~sw:t.sw uri in
-    let status = Http.Response.status resp |> Http.Status.to_int in
-    let payload = read_body ~max_size:max_invocation_payload_bytes body in
-    (status, resp, payload)
+    Eio.Switch.run (fun sw ->
+      let resp, body = Cohttp_eio.Client.get (client t.net) ~sw uri in
+      let status = Http.Response.status resp |> Http.Status.to_int in
+      let payload = read_body ~max_size:max_invocation_payload_bytes body in
+      (status, resp, payload))
   with
   | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
   | exception ((Out_of_memory | Stack_overflow | Sys.Break) as exn) -> raise exn
@@ -94,7 +94,8 @@ let post ~net ~sw ~uri ~headers ~body =
 let respond t ~request_id ~body =
   let request_id = Uri.pct_encode ~component:`Path request_id in
   let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/%s/response" t.base request_id) in
-  post ~net:t.net ~sw:t.sw ~uri ~headers:[] ~body
+  Eio.Switch.run (fun sw ->
+    post ~net:t.net ~sw ~uri ~headers:[] ~body)
 
 let error_body ~error_message ~error_type =
   Yojson.Safe.to_string (`Assoc [ ("errorMessage", `String error_message); ("errorType", `String error_type) ])
@@ -102,13 +103,15 @@ let error_body ~error_message ~error_type =
 let respond_error t ~request_id ~error_message ~error_type =
   let request_id = Uri.pct_encode ~component:`Path request_id in
   let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/invocation/%s/error" t.base request_id) in
-  post ~net:t.net ~sw:t.sw ~uri ~headers:[ ("Lambda-Runtime-Function-Error-Type", "Unhandled") ]
-    ~body:(error_body ~error_message ~error_type)
+  Eio.Switch.run (fun sw ->
+    post ~net:t.net ~sw ~uri ~headers:[ ("Lambda-Runtime-Function-Error-Type", "Unhandled") ]
+      ~body:(error_body ~error_message ~error_type))
 
 let init_error t ~error_message ~error_type =
   let uri = Uri.of_string (Printf.sprintf "http://%s/2018-06-01/runtime/init/error" t.base) in
-  post ~net:t.net ~sw:t.sw ~uri ~headers:[ ("Lambda-Runtime-Function-Error-Type", "Unhandled") ]
-    ~body:(error_body ~error_message ~error_type)
+  Eio.Switch.run (fun sw ->
+    post ~net:t.net ~sw ~uri ~headers:[ ("Lambda-Runtime-Function-Error-Type", "Unhandled") ]
+      ~body:(error_body ~error_message ~error_type))
 
 (* Cancellation must interrupt the wait for a new invocation, never abandon
    the ack for one already received — once next_invocation returns Ok, Lambda

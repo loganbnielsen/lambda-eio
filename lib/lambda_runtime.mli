@@ -16,7 +16,7 @@ type invocation = {
 
 type t
 
-val create : net:_ Eio.Net.t -> sw:Eio.Switch.t -> base:string -> t
+val create : net:_ Eio.Net.t -> base:string -> t
 
 val runtime_api_base : unit -> (string, string) result
 (** Reads [AWS_LAMBDA_RUNTIME_API]. [Error] if unset — calling this outside a
