@@ -16,13 +16,24 @@ let create ~net ~base =
 
 let ( let* ) = Result.bind
 
+type error =
+  | Missing_runtime_api
+  | Http_error of int * string
+  | Malformed_response of string
+  | Network_error of string
+
+let error_to_string = function
+  | Missing_runtime_api ->
+    "AWS_LAMBDA_RUNTIME_API is not set — not running in a Lambda execution environment (or a local Runtime \
+     Interface Emulator)"
+  | Http_error (status, body) -> Printf.sprintf "runtime API returned HTTP %d: %s" status body
+  | Malformed_response msg -> msg
+  | Network_error msg -> msg
+
 let runtime_api_base () =
   match Sys.getenv_opt "AWS_LAMBDA_RUNTIME_API" with
   | Some base -> Ok base
-  | None ->
-    Error
-      "AWS_LAMBDA_RUNTIME_API is not set — not running in a Lambda execution environment (or a local Runtime \
-       Interface Emulator)"
+  | None -> Error Missing_runtime_api
 
 let max_response_body_bytes = 64 * 1024
 (* The Runtime API's own JSON acknowledgement bodies are tiny; this isn't the
@@ -44,15 +55,15 @@ let client net = Cohttp_eio.Client.make ~https:None net
    unit-testable with a synthetic Http.Header.t. *)
 let invocation_of_headers ~headers ~payload =
   match Http.Header.get headers "Lambda-Runtime-Aws-Request-Id" with
-  | None -> Error "invocation/next response missing Lambda-Runtime-Aws-Request-Id header"
+  | None -> Error (Malformed_response "invocation/next response missing Lambda-Runtime-Aws-Request-Id header")
   | Some request_id ->
     let* deadline_ms =
       match Http.Header.get headers "Lambda-Runtime-Deadline-Ms" with
       | Some s -> (
         match Int64.of_string_opt s with
         | Some deadline -> Ok deadline
-        | None -> Error "invocation/next response has malformed Lambda-Runtime-Deadline-Ms header")
-      | None -> Error "invocation/next response missing Lambda-Runtime-Deadline-Ms header"
+        | None -> Error (Malformed_response "invocation/next response has malformed Lambda-Runtime-Deadline-Ms header"))
+      | None -> Error (Malformed_response "invocation/next response missing Lambda-Runtime-Deadline-Ms header")
     in
     let invoked_function_arn = Option.value (Http.Header.get headers "Lambda-Runtime-Invoked-Function-Arn") ~default:"" in
     let trace_id = Http.Header.get headers "Lambda-Runtime-Trace-Id" in
@@ -72,9 +83,9 @@ let next_invocation t =
   with
   | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
   | exception ((Out_of_memory | Stack_overflow | Sys.Break) as exn) -> raise exn
-  | exception exn -> Error ("next_invocation: " ^ Printexc.to_string exn)
+  | exception exn -> Error (Network_error ("next_invocation: " ^ Printexc.to_string exn))
   | status, _, payload when status < 200 || status >= 300 ->
-    Error (Printf.sprintf "invocation/next returned HTTP %d: %s" status (truncate payload))
+    Error (Http_error (status, truncate payload))
   | _, resp, payload -> invocation_of_headers ~headers:(Http.Response.headers resp) ~payload
 
 let post ~net ~sw ~uri ~headers ~body =
@@ -86,10 +97,10 @@ let post ~net ~sw ~uri ~headers ~body =
   with
   | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
   | exception ((Out_of_memory | Stack_overflow | Sys.Break) as exn) -> raise exn
-  | exception exn -> Error (Printexc.to_string exn)
+  | exception exn -> Error (Network_error (Printexc.to_string exn))
   | status, resp_body ->
     if status >= 200 && status < 300 then Ok ()
-    else Error (Printf.sprintf "runtime API returned HTTP %d: %s" status (truncate resp_body))
+    else Error (Http_error (status, truncate resp_body))
 
 let respond t ~request_id ~body =
   let request_id = Uri.pct_encode ~component:`Path request_id in
@@ -134,15 +145,15 @@ let run_loop t ~clock ?(on_error = default_on_error) ~handler () =
     Eio.Cancel.protect (fun () ->
       respond_error t ~request_id:invocation.request_id ~error_message:msg
         ~error_type:"HandlerError"
-      |> Result.map_error (fun post_msg -> "respond_error failed: " ^ post_msg))
+      |> Result.map_error (fun post_err -> "respond_error failed: " ^ error_to_string post_err))
   in
   let rec loop () =
     (match next_invocation t with
-     | Error msg ->
+     | Error err ->
        (* Transient failures must not kill the loop — a warm execution
           environment is expected to keep calling next_invocation for its
           entire lifetime. *)
-       on_error ("next_invocation failed: " ^ msg);
+       on_error ("next_invocation failed: " ^ error_to_string err);
        Eio.Time.sleep clock next_invocation_retry_delay
      | Ok invocation ->
        (* Only the handler-and-ack sequence itself is protected from
@@ -169,7 +180,7 @@ let run_loop t ~clock ?(on_error = default_on_error) ~handler () =
          | Ok body ->
            Eio.Cancel.protect (fun () ->
              respond t ~request_id:invocation.request_id ~body
-             |> Result.map_error (fun msg -> "respond failed: " ^ msg))
+             |> Result.map_error (fun err -> "respond failed: " ^ error_to_string err))
          | Error msg -> report_invocation_error invocation msg
        in
        (match post_result with
