@@ -6,8 +6,8 @@
 let () =
   Eio_main.run @@ fun env ->
   match Lambda_runtime.runtime_api_base () with
-  | Error msg ->
-    Printf.eprintf "rie_echo_handler: %s\n%!" msg;
+  | Error err ->
+    Printf.eprintf "rie_echo_handler: %s\n%!" (Lambda_runtime.error_to_string err);
     exit 1
   | Ok base ->
     let runtime = Lambda_runtime.create ~net:env#net ~base in

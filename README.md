@@ -131,7 +131,7 @@ Usage (see `test/rie_echo_handler.ml` for the full working example):
 ```ocaml
 Eio_main.run @@ fun env ->
 match Lambda_runtime.runtime_api_base () with
-| Error msg -> Printf.eprintf "%s\n%!" msg; exit 1
+| Error err -> Printf.eprintf "%s\n%!" (Lambda_runtime.error_to_string err); exit 1
 | Ok base ->
   let runtime = Lambda_runtime.create ~net:env#net ~base in
   Lambda_runtime.run_loop runtime ~clock:env#clock ~handler:(fun inv ->

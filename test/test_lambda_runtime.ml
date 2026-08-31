@@ -30,7 +30,7 @@ let test_next_invocation_real_call () =
   in
   with_mock_runtime_api env ~callback (fun runtime ->
       match Lambda_runtime.next_invocation runtime with
-      | Error msg -> Alcotest.fail msg
+      | Error err -> Alcotest.fail (Lambda_runtime.error_to_string err)
       | Ok { request_id; payload; _ } ->
         Alcotest.(check string) "request_id" "req-abc" request_id;
         Alcotest.(check string) "payload" {|{"hello":"world"}|} payload)
@@ -48,7 +48,7 @@ let test_respond_posts_to_the_right_path_with_the_right_body () =
   with_mock_runtime_api env ~callback (fun runtime ->
       match Lambda_runtime.respond runtime ~request_id:"req/1?x" ~body:{|{"result":"ok"}|} with
       | Ok () -> ()
-      | Error msg -> Alcotest.fail msg)
+      | Error err -> Alcotest.fail (Lambda_runtime.error_to_string err))
 
 let test_respond_error_posts_error_shape_and_header () =
   Eio_main.run @@ fun env ->
@@ -71,7 +71,7 @@ let test_respond_error_posts_error_shape_and_header () =
           ~error_type:"RuntimeError"
       with
       | Ok () -> ()
-      | Error msg -> Alcotest.fail msg)
+      | Error err -> Alcotest.fail (Lambda_runtime.error_to_string err))
 
 let test_post_error_status_is_reported () =
   Eio_main.run @@ fun env ->
@@ -94,9 +94,11 @@ let test_post_error_includes_response_body () =
   with_mock_runtime_api env ~callback (fun runtime ->
       match Lambda_runtime.respond runtime ~request_id:"req-3" ~body:"{}" with
       | Ok () -> Alcotest.fail "expected a non-2xx status to be an Error"
-      | Error msg ->
-        Alcotest.(check bool) "error message includes the response body" true
-          (contains msg "stale Lambda-Runtime-Aws-Request-Id"))
+      | Error (Lambda_runtime.Http_error (400, body)) ->
+        Alcotest.(check bool) "error body includes the response body" true
+          (contains body "stale Lambda-Runtime-Aws-Request-Id")
+      | Error err ->
+        Alcotest.failf "expected Http_error 400, got: %s" (Lambda_runtime.error_to_string err))
 
 (* A broken/misconfigured Runtime API endpoint could return a non-2xx status
    while still carrying a stale Lambda-Runtime-Aws-Request-Id header (e.g.
@@ -165,7 +167,7 @@ let test_init_error_posts_to_the_right_path () =
         Lambda_runtime.init_error runtime ~error_message:"bad config" ~error_type:"ConfigError"
       with
       | Ok () -> ()
-      | Error msg -> Alcotest.fail msg)
+      | Error err -> Alcotest.fail (Lambda_runtime.error_to_string err))
 
 (* No automated test for Cancelled re-raising in next_invocation/post: a test
    built on Eio.Fiber.first racing a cancellation can't distinguish correct

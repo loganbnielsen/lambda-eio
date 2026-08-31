@@ -18,26 +18,46 @@ type t
 
 val create : net:_ Eio.Net.t -> base:string -> t
 
-val runtime_api_base : unit -> (string, string) result
-(** Reads [AWS_LAMBDA_RUNTIME_API]. [Error] if unset — calling this outside a
-    real Lambda execution environment (or a local Runtime Interface
-    Emulator) is a configuration error, not something to default around. *)
+(** Runtime API transport/contract failure — distinct from a handler's own
+    application error, which stays a plain [string] (see [run_loop]'s
+    [handler] below): it's free-form text Lambda forwards verbatim as
+    [errorMessage], not something this package's callers branch on. *)
+type error =
+  | Missing_runtime_api
+      (** [AWS_LAMBDA_RUNTIME_API] is unset — not running in a real Lambda
+          execution environment (or a local Runtime Interface Emulator). *)
+  | Http_error of int * string
+      (** The Runtime API responded with a non-2xx status; carries the
+          status and a truncated response body. *)
+  | Malformed_response of string
+      (** [next_invocation]'s response was missing or had a malformed
+          required header. *)
+  | Network_error of string
+      (** Connection failure, or any other transport-level exception. *)
 
-val next_invocation : t -> (invocation, string) result
+val error_to_string : error -> string
+
+val runtime_api_base : unit -> (string, error) result
+(** Reads [AWS_LAMBDA_RUNTIME_API]. [Error Missing_runtime_api] if unset —
+    calling this outside a real Lambda execution environment (or a local
+    Runtime Interface Emulator) is a configuration error, not something to
+    default around. *)
+
+val next_invocation : t -> (invocation, error) result
 (** [GET {base}/2018-06-01/runtime/invocation/next]. A real long-poll — this
     can block for minutes waiting for the next event. *)
 
-val respond : t -> request_id:string -> body:string -> (unit, string) result
+val respond : t -> request_id:string -> body:string -> (unit, error) result
 (** [POST {base}/2018-06-01/runtime/invocation/{request_id}/response].
     [request_id] is encoded as one URI path segment before sending. *)
 
 val respond_error :
-  t -> request_id:string -> error_message:string -> error_type:string -> (unit, string) result
+  t -> request_id:string -> error_message:string -> error_type:string -> (unit, error) result
 (** [POST {base}/2018-06-01/runtime/invocation/{request_id}/error].
     [request_id] is encoded as one URI path segment before sending. *)
 
 val init_error :
-  t -> error_message:string -> error_type:string -> (unit, string) result
+  t -> error_message:string -> error_type:string -> (unit, error) result
 (** [POST {base}/2018-06-01/runtime/init/error] — for a failure before the
     loop below ever starts, distinct from a per-invocation error. *)
 
