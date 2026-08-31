@@ -10,7 +10,6 @@ let () =
     Printf.eprintf "rie_echo_handler: %s\n%!" msg;
     exit 1
   | Ok base ->
-    Eio.Switch.run @@ fun sw ->
-    let runtime = Lambda_runtime.create ~net:env#net ~sw ~base in
+    let runtime = Lambda_runtime.create ~net:env#net ~base in
     Lambda_runtime.run_loop runtime ~clock:env#clock ~handler:(fun (inv : Lambda_runtime.invocation) ->
         Ok (Printf.sprintf {|{"echoed":%s}|} inv.payload)) ()
