@@ -92,29 +92,50 @@ type invocation = {
   payload : string;  (** raw JSON event body — {!Lambda_event} parses common shapes *)
 }
 
+type t
+
+val create : net:_ Eio.Net.t -> base:string -> t
+
 val runtime_api_base : unit -> (string, string) result
 (** Reads [AWS_LAMBDA_RUNTIME_API]; [Error] if unset — calling this outside a real
     Lambda execution environment (or a local Runtime Interface Emulator) is a
     configuration error, not something to default around. *)
 
-val next_invocation : net:_ Eio.Net.t -> sw:Eio.Switch.t -> base:string -> (invocation, string) result
-val respond : net:_ Eio.Net.t -> sw:Eio.Switch.t -> base:string -> request_id:string -> body:string -> (unit, string) result
+val next_invocation : t -> (invocation, string) result
+val respond : t -> request_id:string -> body:string -> (unit, string) result
 val respond_error :
-  net:_ Eio.Net.t -> sw:Eio.Switch.t -> base:string -> request_id:string ->
-  error_message:string -> error_type:string -> (unit, string) result
+  t -> request_id:string -> error_message:string -> error_type:string -> (unit, string) result
 val init_error :
-  net:_ Eio.Net.t -> sw:Eio.Switch.t -> base:string ->
-  error_message:string -> error_type:string -> (unit, string) result
+  t -> error_message:string -> error_type:string -> (unit, string) result
 
-val run_loop :
-  net:_ Eio.Net.t -> sw:Eio.Switch.t -> base:string ->
-  handler:(invocation -> (string, string) result) -> unit
+val run_loop
+  :  t
+  -> clock:_ Eio.Time.clock
+  -> ?on_error:(string -> unit)
+  -> handler:(invocation -> (string, string) result)
+  -> unit
+  -> unit
 (** Loops forever: [next_invocation], run [handler], [respond]/[respond_error].
     A handler exception is caught and reported via [respond_error] rather than
-    crashing the loop — one bad invocation must not kill the whole warm
-    execution environment for every future invocation. Cancellation only takes
-    effect while waiting on [next_invocation]; once an invocation is received,
-    the handler-and-ack sequence always runs to completion. *)
+    propagating — one bad invocation must not crash the whole warm execution
+    environment for every future invocation. [handler] is cancellable; only
+    the [respond]/[respond_error] ack after it returns is protected, so an
+    accepted invocation still gets acked even if the handler itself is
+    cancelled. A transient Runtime API failure is reported to [on_error]
+    (default: one line to stderr) instead of stopping the loop, with a
+    backoff pause before retrying [next_invocation]. *)
+```
+
+Usage (see `test/rie_echo_handler.ml` for the full working example):
+
+```ocaml
+Eio_main.run @@ fun env ->
+match Lambda_runtime.runtime_api_base () with
+| Error msg -> Printf.eprintf "%s\n%!" msg; exit 1
+| Ok base ->
+  let runtime = Lambda_runtime.create ~net:env#net ~base in
+  Lambda_runtime.run_loop runtime ~clock:env#clock ~handler:(fun inv ->
+    Ok (Printf.sprintf {|{"echoed":%s}|} inv.payload)) ()
 ```
 
 ### `Lambda_event`
