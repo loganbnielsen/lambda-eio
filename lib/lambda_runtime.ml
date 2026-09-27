@@ -14,7 +14,7 @@ type t = {
 let create ~net ~base =
   { net = (net :> [`Generic] Eio.Net.ty Eio.Std.r); base }
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 type error =
   | Missing_runtime_api

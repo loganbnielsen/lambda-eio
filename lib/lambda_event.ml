@@ -16,7 +16,7 @@ type dynamodb_stream_record = {
   old_image : Yojson.Safe.t option;
 }
 
-let ( let* ) = Result.bind
+open Result.Syntax
 
 (* Plain pattern matching throughout, not Yojson.Safe.Util — member/
    to_string_option etc. raise Type_error on unexpected shapes. Every
